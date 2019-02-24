@@ -4,6 +4,7 @@
 1. Click Create New File
 2. Paste Code
 3. Scroll down press green button
+4. Tell segwaysteve
 
 #### To edit code:
 1. Click File you want to edit
@@ -11,3 +12,4 @@
 3. edit
 4. scroll down and name the thing the same name but with -edit at the end
 5. press nice green button
+6. Tell segwaysteve
