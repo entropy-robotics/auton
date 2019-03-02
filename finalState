@@ -1,0 +1,1519 @@
+#include "robot-config.h"
+/*---------------------------------------------------------------------------*/
+/*                                                                           */
+/*        Description: Competition template for VCS VEX V5                    */
+/*                                                                           */
+/*---------------------------------------------------------------------------*/
+
+//Creates a competition object that allows access to Competition methods.
+
+#include <math.h>
+bool vis = false;
+float pi = 3.1415926;
+float radius = 5.78125;
+float diameter = 11.5625; 
+float avgLeft; 
+float avgRight; 
+float theta; 
+int auton;
+double slewAutonRate = 10;
+double slewRate = 20;
+//int max = 150;
+using namespace vex; 
+/*---------------------------------------------------------------------------*/
+/*                                                                           */
+/*        Description: Competition template for VCS VEX V5                    */
+/*                                                                           */
+/*---------------------------------------------------------------------------*/
+
+//Creates a competition object that allows access to Competition methods.
+vex::competition    Competition;
+int sleepy;
+struct driveInput {
+    double power;
+    double turn;
+};
+
+driveInput slew (double y, double y1, double x, double x1, double slewRate){
+    if (y-y1 > slewRate){
+        y1 += slewRate;
+    }
+    else if (y1-y > slewRate){
+        y1 -= slewRate;
+    }
+    if (abs(y) < (15)){
+        y1 = 0;
+    }
+
+    if (x-x1 > (slewRate+3)){
+        x1 += (slewRate);
+    }
+    else if (x1-x > (slewRate+3)){
+        x1 -= (slewRate);
+    }
+    if (abs(x) < (15)){
+        x1 = 0;
+    }
+
+    
+    driveInput result = {y1, x1};
+    return result;
+}
+double slewAuton (double y, double y1, double slewRate){
+    if (y-y1 > slewRate){
+        y1 += slewRate;
+    }
+    else if (y1-y > slewRate){
+        y1 -= slewRate;
+    }
+
+    
+    return y1;
+}
+void setForDrive(double velocity)
+{
+    LeftFD.setVelocity(velocity, velocityUnits::rpm); 
+    LeftBD.setVelocity(velocity, velocityUnits::rpm);
+
+    RightBD.setVelocity(velocity, velocityUnits::rpm);
+    RightFD.setVelocity(velocity, velocityUnits::rpm);
+    //set motor velocities to PID value 
+    LeftBD.spin(directionType::fwd); //spin motors 
+    RightBD.spin(directionType::fwd);
+    LeftFD.spin(directionType::fwd);
+   RightFD.spin(directionType::fwd);
+ 
+}
+void autoTurn(double velocity) //-velocity is clockwise 
+{
+    RightBD.setVelocity(velocity, velocityUnits::rpm);
+    LeftBD.setVelocity(-velocity, velocityUnits::rpm);
+    RightFD.setVelocity(velocity, velocityUnits::rpm);
+    LeftFD.setVelocity(-velocity, velocityUnits::rpm); //set motor velocities to PID value 
+    RightBD.spin(directionType::fwd); //spin motors 
+    RightFD.spin(directionType::fwd);
+    LeftBD.spin(directionType::fwd);
+    LeftFD.spin(directionType::fwd);
+ 
+}
+void getAvgs() {
+    avgLeft = pi*2*(LeftBD.rotation(vex::rotationUnits::rev) + LeftFD.rotation(vex::rotationUnits::rev)); //av number of revs, 2*r*pi 
+    avgRight = pi*2*(RightBD.rotation(vex::rotationUnits::rev) + RightBD.rotation(vex::rotationUnits::rev));   
+}
+float fakeGyro(){
+    //take averages and convert to inches 
+    //900 ticks/rev for 200 rpm 
+    //use rev: convers
+    /*avgLeft = pi*2*(LeftBD.rotation(vex::rotationUnits::rev) + LeftFD.rotation(vex::rotationUnits::rev)); //av number of revs, 2*r*pi 
+    avgRight = pi*2*(RightBD.rotation(vex::rotationUnits::rev) + RightBD.rotation(vex::rotationUnits::rev));  */
+    getAvgs();
+    theta = (avgLeft-avgRight)/diameter;
+    return theta;
+    //theta = (L-R)/(diameter)
+}
+void turn(float turnGoal, float speed){
+    while(turnGoal > fakeGyro()){
+        autoTurn(-speed);
+    }
+    autoTurn(0);
+}
+void turnPID_FakeGyro(float degTurnGoal, float forTime, float max) {
+    float initDeg = fakeGyro(); 
+float integral = 0; //initialize integral term, error, range for integral limiting, prevError, constants, derivative, speed
+float error = 0;
+float integRange = 1.00;
+float prevError = 0;
+float kP = 105; //115 is eh 
+float kD = 0; // idk we need to redo this one 
+float kI = 0;
+float deriv = 0;
+float speed = 0;
+    float direction = 1;
+int timer = 0;
+    float turnGoal = (degTurnGoal/180)*pi;
+while (timer < forTime) {
+        //find error: the signed difference between the goal and the current position relative to the initial position  
+ error = turnGoal - (fakeGyro()-initDeg);
+        //if there's no error, reset integral 
+ if (error == 0) {
+  integral = 0;
+ }
+        //if error is too big, stop adding integral 
+ if (fabs(error) > integRange) {
+  integral = 0;
+ }
+        //calculate integral, derivative, and total motor power
+ integral += error;
+ deriv = error - prevError;
+ speed = error*kP + integral*kI + deriv*kD;
+        if (abs(speed) > abs(max)){
+            speed = max;
+        }
+ autoTurn(-speed);
+ prevError = error;
+ timer += 30;
+        //set loop runtime 
+ vex::task::sleep(30);
+        
+        if (timer % 600 == 0)
+        {
+        Brain.Screen.clearScreen();
+        Brain.Screen.setCursor(1, 1);
+            //convert error to degrees: error*180/pi, * 10 
+        Brain.Screen.print(error*1000);
+        Brain.Screen.newLine();
+        //Brain.Screen.print(error*kP);
+        Brain.Screen.newLine(); 
+        //Brain.Screen.print(deriv*kD);
+        }
+        
+}
+autoTurn(0);
+}
+
+
+void driveBackwardPID(int driveGoal, float forTime, int max) {
+float integral = 0; //initialize integral term, error, range for integral limiting, prevError, constants, derivative, speed
+float error = 0;
+int integRange = 13;
+float prevError = 0;
+    //19.5
+float kP = 15;
+    //20.3
+float kD = 0;
+float kI = 0;
+float deriv = 0;
+float speed = 0;
+int timer = 0;
+float avg;
+    double y1 = 0;
+    float initAvg = (avgRight + avgLeft)/2.0000;
+while (timer < forTime) {
+            getAvgs();
+  avg = (avgRight + avgLeft)/2;
+  error = driveGoal  + (avg - initAvg);
+  if (error == 0) {
+   integral = 0;
+  }
+  if (fabs(error) > integRange) {
+   integral = 0;
+  }
+  integral += error;
+  deriv = error - prevError;
+            y1 = speed;
+  speed = error*kP + integral*kI + deriv*kD;
+  if (abs(speed)>abs(max)){
+                setForDrive(-(slewAuton(max, y1, slewAutonRate)));
+               
+                speed = (slewAuton(max, y1, slewAutonRate));
+            }
+            else {
+               setForDrive(-(slewAuton(speed, y1, slewAutonRate)));
+                speed = (slewAuton(speed, y1, slewAutonRate));
+            }
+            
+  prevError = error;
+  timer += 30;
+        if (timer % 600 == 0)
+        {
+        Brain.Screen.clearScreen();
+        Brain.Screen.setCursor(1, 1);
+            //convert error to degrees: error*180/pi, * 10 
+        Brain.Screen.print(error*1000);
+        Brain.Screen.newLine();
+        //Brain.Screen.print(error*kP);
+        Brain.Screen.newLine(); 
+        //Brain.Screen.print(deriv*kD);
+         Brain.Screen.newLine(); 
+        //Brain.Screen.print( (avg-initAvg));
+             Brain.Screen.newLine(); 
+        }
+  task::sleep(30);
+}
+setForDrive(0);
+}
+void driveForwardPID(int driveGoal, float forTime, int max) {
+float integral = 0; //initialize integral term, error, range for integral limiting, prevError, constants, derivative, speed
+float error = 0;
+int integRange = 15;
+float prevError = 0;
+    //19
+float kP = 15;
+    //10
+float kD = 0;
+float kI = 0;
+float deriv = 0;
+float speed = 0;
+int timer = 0;
+float avg;
+    float initAvg = (avgRight + avgLeft)/2.0000;
+    double y1 = 0;
+while (timer < forTime) {
+            getAvgs();
+  avg = (avgRight + avgLeft)/2;
+  error = driveGoal - (avg - initAvg);
+  if (error == 0) {
+   integral = 0;
+  }
+  if (fabs(error) > integRange) {
+   integral = 0;
+  }
+  integral += error;
+  deriv = error - prevError;
+            y1 = speed;
+  speed = error*kP + integral*kI + deriv*kD;
+  if (speed > max){
+                setForDrive(slewAuton(max, y1, slewAutonRate));
+                speed = (slewAuton(max, y1, slewAutonRate));
+            }
+            else {
+                setForDrive(slewAuton(speed, y1, slewAutonRate));
+                speed = (slewAuton(speed, y1, slewAutonRate));
+            }
+
+  prevError = error;
+  timer += 30;
+        if (timer % 600 == 0)
+        {
+        Brain.Screen.clearScreen();
+        Brain.Screen.setCursor(1, 1);
+            //convert error to degrees: error*180/pi, * 10 
+        Brain.Screen.print(error*1000);
+        //Brain.Screen.newLine();
+        //Brain.Screen.print(error*kP);
+        Brain.Screen.newLine(); 
+        //Brain.Screen.print(deriv*kD);
+         Brain.Screen.newLine(); 
+        //Brain.Screen.print( (avg-initAvg));
+             Brain.Screen.newLine(); 
+        }
+  task::sleep(30);
+}
+setForDrive(0);
+}
+
+void draw_grid (void) {
+    Brain.Screen.setPenColor(color::blue);
+    for (int i = 0; i < 2; i++){
+        Brain.Screen.drawLine(160*(i+1),0,160*(i+1),240);
+
+    }
+    Brain.Screen.drawLine(0,80*(1), 480, 80*(1));
+    Brain.Screen.drawLine(0,160*(1), 480, 160*(1));
+    Brain.Screen.printAt(1,40,"RedCap");
+    Brain.Screen.printAt(200, 40, "RedDouble");
+    Brain.Screen.printAt(400, 40, "RedPark");
+    Brain.Screen.printAt(1,120,"BlueCap");
+    Brain.Screen.printAt(200, 120, "BlueDouble");
+    Brain.Screen.printAt(400, 120, "BluePark");
+    Brain.Screen.printAt(1,200,"RedBack");
+    Brain.Screen.printAt(200, 200, "BlueBack");
+    Brain.Screen.printAt(400, 200, "Prog");
+}
+
+void draw_touch () {
+    Brain.Screen.setPenColor(color::red);
+    Brain.Screen.drawCircle(Brain.Screen.xPosition(), Brain.Screen.yPosition(), 30);
+}
+/*---------------------------------------------------------------------------*/
+/*                          Pre-Autonomous Functions                         */
+/*                                                                           */
+/*  You may want to perform some actions before the competition starts.      */
+/*  Do them in the following function.  You must return from this function   */
+/*  or the autonomous and usercontrol tasks will not be started.  This       */
+/*  function is only called once after the cortex has been powered on and    */ 
+/*  not every time that the robot is disabled.                               */
+/*---------------------------------------------------------------------------*/
+
+void pre_auton( void ) {
+    
+}
+
+void redPark (void) {
+    // ..........................................................................
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    Catapult.startRotateFor(290,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+  
+    //Intake Ball
+    driveForwardPID(29, 1500, 170);
+    driveForwardPID(5, 800, 80);
+    driveBackwardPID(38.5, 2000, 170);
+    
+    //Turn to Flag
+    turnPID_FakeGyro(-105, 800, -200);
+    
+    //Vision Aiming
+    vis = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 150 && Vision.objects[0].centerX < 153){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 153){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 150 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    
+
+    
+      
+    //Stop Drive 
+         
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+    
+    //Shoot
+        
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    Catapult.startRotateFor(540,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(300);
+    //Toggle Low Flag 
+    turnPID_FakeGyro(-5, 500, -80);
+    driveForwardPID(45, 1700, 160);
+    //Flip Cap
+    turnPID_FakeGyro(-5, 500, 80);
+    driveBackwardPID(69,3000,170);
+    turnPID_FakeGyro(105, 1300, 200);
+    driveForwardPID(45, 1500, 200);
+    RightFD.stop(brakeType::coast);
+    RightBD.stop(brakeType::coast);
+    LeftFD.stop(brakeType::coast);
+    LeftBD.stop(brakeType::coast);
+
+}
+void bluePark (void) {
+    // ..........................................................................
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    Catapult.startRotateFor(290,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+  
+    //Intake Ball
+    driveForwardPID(29, 1500, 170);
+    driveForwardPID(5, 800, 80);
+    driveBackwardPID(38.5, 2000, 170);
+    
+    //Turn to Flag
+    turnPID_FakeGyro(105, 800, 200);
+    
+    //Vision Aiming
+    vis = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 162 && Vision.objects[0].centerX < 165){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 165){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 162 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    
+
+    
+      
+    //Stop Drive 
+         
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+    
+    //Shoot
+        
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    Catapult.startRotateFor(540,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(300);
+    //Toggle Low Flag 
+    turnPID_FakeGyro(5, 500, 80);
+    driveForwardPID(45, 1700, 160);
+    //Flip Cap
+    turnPID_FakeGyro(5, 500, 80);
+    driveBackwardPID(69,3000,170);
+    turnPID_FakeGyro(-105, 1300, -200);
+    driveForwardPID(45, 1500, 200);
+    RightFD.stop(brakeType::coast);
+    RightBD.stop(brakeType::coast);
+    LeftFD.stop(brakeType::coast);
+    LeftBD.stop(brakeType::coast);
+
+}
+void redDouble (void) {
+     // ..........................................................................
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    Sweeper.startRotateFor(-220,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    Catapult.startRotateFor(290,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    //Intake Ball
+    driveForwardPID(14, 750, 140);
+    Sweeper.startRotateFor(-70,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    
+    driveBackwardPID(7, 750, 100);
+    driveBackwardPID(10, 750, 100);
+    turnPID_FakeGyro(-125, 1000, -200);
+    //Vision Aiming
+    vis = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 150 && Vision.objects[0].centerX < 153){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 153){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 150 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+    
+    //Shoot
+        
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    Catapult.startRotateFor(530,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    Sweeper.startRotateFor(280,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(500);
+    turnPID_FakeGyro(92, 1000, 200);
+    driveForwardPID(36, 1750, 170);
+    driveBackwardPID(5, 400, 170);
+    turnPID_FakeGyro(-120, 800, -200);
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    driveForwardPID(11.25, 800, 170);
+     vis = false;
+    toExec = 0;
+    while (!vis) {
+     Vision2.takeSnapshot(1);
+     //If in firing position
+     if (Vision2.largestObject.centerX > 140 && Vision2.largestObject.centerX < 160){
+         vis = true;
+     }
+     //If to the right
+        else if (Vision2.largestObject.centerX > 160){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision2.largestObject.centerX < 140){
+         autoTurn(10);
+     }
+        
+     }
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    autoTurn(0);
+    Sweeper.startRotateFor(-320,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(750);
+    //Sweeper.startRotateFor(300,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    driveBackwardPID(5, 500, 170);
+    turnPID_FakeGyro(55, 1000, 200);
+    //Vision Aiming
+    vis = false;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 150 && Vision.objects[0].centerX < 153){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 153){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 150 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    Catapult.startRotateFor(530,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(500);
+    Roller.spin(directionType::fwd, -50, velocityUnits::pct);
+    Sweeper.startRotateFor(320,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    turnPID_FakeGyro(-40, 1000, -200);
+    driveForwardPID(20, 1000, 200);
+    
+}
+void blueDouble (void) {
+     // ..........................................................................
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    Sweeper.startRotateFor(-220,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    Catapult.startRotateFor(290,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    //Intake Ball
+    driveForwardPID(14, 750, 140);
+    Sweeper.startRotateFor(-70,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    
+    driveBackwardPID(7, 750, 100);
+    driveBackwardPID(10, 750, 100);
+    turnPID_FakeGyro(125, 1000, 200);
+    //Vision Aiming
+    vis = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 162 && Vision.objects[0].centerX < 165){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 165){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 162 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+    
+    //Shoot
+        
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    Catapult.startRotateFor(530,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    Sweeper.startRotateFor(280,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(500);
+    turnPID_FakeGyro(-93.25, 1000, -200);
+    driveForwardPID(36, 1750, 170);
+    driveBackwardPID(5, 400, 170);
+    turnPID_FakeGyro(120, 800, 200);
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    driveForwardPID(11.25, 800, 170);
+     vis = false;
+    toExec = 0;
+    while (!vis) {
+     Vision2.takeSnapshot(1);
+     //If in firing position
+     if (Vision2.largestObject.centerX > 140 && Vision2.largestObject.centerX < 160){
+         vis = true;
+     }
+     //If to the right
+        else if (Vision2.largestObject.centerX > 160){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision2.largestObject.centerX < 140){
+         autoTurn(10);
+     }
+        
+     }
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    autoTurn(0);
+    Sweeper.startRotateFor(-320,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(750);
+    //Sweeper.startRotateFor(300,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    driveBackwardPID(5, 500, 170);
+    turnPID_FakeGyro(-55, 1000, -200);
+    //Vision Aiming
+    vis = false;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 162 && Vision.objects[0].centerX < 165){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 165){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 162 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    Catapult.startRotateFor(530,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(500);
+    Roller.spin(directionType::fwd, -50, velocityUnits::pct);
+    Sweeper.startRotateFor(320,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    turnPID_FakeGyro(40, 1000, 200);
+    driveForwardPID(20, 1000, 200);
+    
+}
+
+void redBack1 (void) {
+     // ..........................................................................
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+                                                                   
+    Catapult.startRotateFor(325,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    //Intake Ball
+    driveForwardPID(29, 1500, 140);
+    driveForwardPID(6, 700, 50);
+    
+    driveBackwardPID(15, 1000, 170);
+    
+    turnPID_FakeGyro(45, 1000, 200);
+    
+   Roller.spin(vex::directionType::fwd,-100,vex::velocityUnits::pct);
+    
+    driveForwardPID(26.5, 1500, 140);
+    
+    driveBackwardPID(10.5, 1000, 140);
+    
+    turnPID_FakeGyro(-145, 1000, -200);
+     Roller.spin(vex::directionType::fwd,0,vex::velocityUnits::pct);
+    
+    driveForwardPID(15, 2000, 100);
+    driveForwardPID(10, 1000, 20);
+    
+    driveForwardPID(21, 2000, 70);
+
+    
+    
+    
+    
+    
+    
+
+
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+   
+}
+void blueBack1 (void) {
+     // ..........................................................................
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+                                                                   
+    Catapult.startRotateFor(325,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    //Intake Ball
+    driveForwardPID(29, 1500, 140);
+    driveForwardPID(6, 700, 50);
+    
+    driveBackwardPID(15, 1000, 170);
+    
+    turnPID_FakeGyro(-45, 1000, -200);
+    
+   Roller.spin(vex::directionType::fwd,-100,vex::velocityUnits::pct);
+    
+    driveForwardPID(26.5, 1500, 140);
+    
+    driveBackwardPID(10.5, 1000, 140);
+    
+    turnPID_FakeGyro(145, 1000, 200);
+     Roller.spin(vex::directionType::fwd,0,vex::velocityUnits::pct);
+    
+    driveForwardPID(15, 2000, 100);
+    driveForwardPID(10, 1000, 20);
+    
+    driveForwardPID(21, 2000, 70);
+
+    
+    
+    
+    
+    
+    
+
+
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+   
+}
+void redCap (void) {
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    Catapult.startRotateFor(290,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+  
+    //Intake Ball
+    driveForwardPID(30, 1200, 170);
+    driveForwardPID(6, 800, 80);
+    driveBackwardPID(37, 2000, 170);
+    
+    //Turn to Flag
+    turnPID_FakeGyro(-105, 800, -200);
+    
+    //Vision Aiming
+    vis = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 150 && Vision.objects[0].centerX < 153){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 153){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 150 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    
+
+    
+      
+    //Stop Drive 
+         
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+    
+    //Shoot
+        
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    Catapult.startRotateFor(555,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(300);
+    //Toggle Low Flag 
+    turnPID_FakeGyro(-5, 500, -80);
+    driveForwardPID(45, 2000, 160);
+    setForDrive(50);
+    vex::task::sleep(400);
+    //Flip Cap
+    driveBackwardPID(25,1000,170);
+    turnPID_FakeGyro(100, 800, 200);
+    Roller.spin(directionType::fwd, -50, velocityUnits::pct);
+    driveForwardPID(24, 1200, 140);
+    driveBackwardPID(6, 800, 140);
+    turnPID_FakeGyro(-28, 1000, -100);
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    
+    //Turn to Flag
+    vis = false;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 140 && Vision.objects[0].centerX < 145){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 145){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 140 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    
+    Catapult.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    vex::task::sleep(1000);
+    Catapult.spin(vex::directionType::fwd,0,vex::velocityUnits::pct);
+    turnPID_FakeGyro(-5, 500, -100);
+    driveForwardPID(35, 1200, 160);
+    //Toggle Low Flag
+    //driveForwardPID(55, 1000, 200);
+    //driveBackwardPID(10, 1000, 200);
+    RightFD.stop(brakeType::coast);
+    RightBD.stop(brakeType::coast);
+    LeftFD.stop(brakeType::coast);
+    LeftBD.stop(brakeType::coast);
+}
+void blueCap (void) {
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    Catapult.startRotateFor(290,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+  
+    //Intake Ball
+    driveForwardPID(30, 1200, 170);
+    driveForwardPID(6, 800, 80);
+    driveBackwardPID(37, 2000, 170);
+    
+    //Turn to Flag
+    turnPID_FakeGyro(105, 800, 200);
+    
+    //Vision Aiming
+    vis = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 162 && Vision.objects[0].centerX < 165){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 165){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 162 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    
+
+    
+      
+    //Stop Drive 
+         
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(200);
+    
+    //Shoot
+        
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    Catapult.startRotateFor(555,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(300);
+    //Toggle Low Flag 
+    turnPID_FakeGyro(5, 500, 80);
+    driveForwardPID(45, 2000, 160);
+    setForDrive(50);
+    vex::task::sleep(400);
+    //Flip Cap
+    driveBackwardPID(25,1000,170);
+    turnPID_FakeGyro(-100, 800, -200);
+    Roller.spin(directionType::fwd, -50, velocityUnits::pct);
+    driveForwardPID(24, 1200, 140);
+    driveBackwardPID(6, 800, 140);
+    turnPID_FakeGyro(28, 1000, 100);
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    
+    //Turn to Flag
+    vis = false;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 152 && Vision.objects[0].centerX < 155){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 155){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 152 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    
+    Catapult.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    vex::task::sleep(1000);
+    Catapult.spin(vex::directionType::fwd,0,vex::velocityUnits::pct);
+    turnPID_FakeGyro(5, 500, 100);
+    driveForwardPID(35, 1200, 160);
+    //Toggle Low Flag
+    //driveForwardPID(55, 1000, 200);
+    //driveBackwardPID(10, 1000, 200);
+    RightFD.stop(brakeType::coast);
+    RightBD.stop(brakeType::coast);
+    LeftFD.stop(brakeType::coast);
+    LeftBD.stop(brakeType::coast);
+}
+
+void prog (void){
+     // ..........................................................................
+    //Deploy Catapult, Start Rollers
+    Roller.spin(vex::directionType::fwd,100,vex::velocityUnits::pct);
+    Catapult.startRotateFor(290,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    Sweeper.startRotateTo(-264,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+
+    
+    //Intake Ball
+    driveForwardPID(37, 2000, 150);
+
+    driveBackwardPID(42, 2500, 170);
+    Sweeper.startRotateTo(0,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    //Turn to Flag
+    turnPID_FakeGyro(-100, 1500, -170);
+    
+    driveForwardPID(50, 2000, 170);
+    Roller.spin(vex::directionType::fwd,-100,vex::velocityUnits::pct);
+
+    
+    //Vision Aiming
+    vis = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis && toExec <= 100000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 145 && Vision.objects[0].centerX < 150){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 150){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 145 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    
+
+    
+    //Stop Drive 
+         
+    RightFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftFD.spin(directionType::fwd, 0, velocityUnits::pct);
+    RightBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.spin(directionType::fwd, 0, velocityUnits::pct);
+    LeftBD.stop(vex::brakeType::brake);
+    LeftFD.stop(vex::brakeType::brake);
+    RightBD.stop(vex::brakeType::brake);
+    RightFD.stop(vex::brakeType::brake);
+    vex::task::sleep(500);
+    
+    //Shoot
+         
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    Catapult.startRotateFor(540, rotationUnits::deg, 100, velocityUnits::pct);
+    vex::task::sleep(400);
+ 
+    
+    turnPID_FakeGyro(-5, 1000, -200);
+    
+    //Toggle Low Flag 
+    driveForwardPID(50, 1500, 200);
+    
+    setForDrive(50);
+    vex::task::sleep(500);
+    turnPID_FakeGyro(5, 250, 200);
+
+
+    
+    driveBackwardPID(24, 1000, 200);
+    Roller.spin(directionType::fwd, -100, velocityUnits::pct);
+    turnPID_FakeGyro(-25, 1000, -200);
+    Sweeper.startRotateTo(-245,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+
+    driveBackwardPID(20, 1000, 200);
+    turnPID_FakeGyro(124, 1500, 200);
+        Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+
+    driveForwardPID(34, 2000, 170);
+    driveBackwardPID(7, 1000, 100);
+    turnPID_FakeGyro(-140, 1500, -200);
+    //Park
+    Sweeper.startRotateTo(0,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    driveForwardPID(8.5, 2000, 170);
+    
+     vis = false;
+    toExec = 0;
+    while (!vis) {
+     Vision2.takeSnapshot(1);
+     //If in firing position
+     if (Vision2.largestObject.centerX > 150 && Vision2.largestObject.centerX < 153){
+         vis = true;
+     }
+     //If to the right
+        else if (Vision2.largestObject.centerX > 160){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision2.largestObject.centerX < 150){
+         autoTurn(10);
+     }  
+     }
+     vis = false;
+    toExec = 0;
+    
+    while (!vis) {
+     Vision2.takeSnapshot(1);
+     //If in firing position
+     if (Vision2.largestObject.centerY > 145 && Vision2.largestObject.centerY < 163){
+         vis = true;
+     }
+     //If to the right
+        else if (Vision2.largestObject.centerY > 163){
+         setForDrive(-10);
+     }
+     //If to the left
+     else if (Vision2.largestObject.centerY < 140){
+         setForDrive(10);
+     }
+        else {
+        Brain.Screen.print("dab");
+        }
+         }
+     
+     
+    autoTurn(0);
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    Sweeper.startRotateTo(-325,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(1000);
+    driveBackwardPID(7, 900, 200);
+    Sweeper.startRotateTo(0,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(1000);
+
+    Roller.spin(directionType::fwd, -50, velocityUnits::pct);
+    driveForwardPID(27, 1000, 200);
+    driveBackwardPID(24, 1000, 170);
+    turnPID_FakeGyro(60, 1000, 200);
+    //Vision Aiming
+    vis = false;
+    toExec = 0;
+    while (!vis && toExec <= 1000000) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 150 && Vision.objects[0].centerX < 153){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 153){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 150 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+     
+    autoTurn(0);
+    Catapult.startRotateFor(530,vex::rotationUnits::deg,100,vex::velocityUnits::pct);
+    vex::task::sleep(500);
+    Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+    turnPID_FakeGyro(-5, 500, 80);
+    driveForwardPID(45, 1500, 200);
+    setForDrive(30);
+    vex::task::sleep(1400);
+    
+    driveBackwardPID(34, 3000, 200);
+    turnPID_FakeGyro(197, 2000, 200);
+    Roller.spin(directionType::fwd, 0, velocityUnits::pct);
+    driveForwardPID(17, 1000, 100);
+    
+    
+    driveForwardPID(17, 1000, 20);
+    driveBackwardPID(17, 1000, 20);
+    driveForwardPID(10, 1000, 20);
+    driveForwardPID(21, 2000, 70);
+    turnPID_FakeGyro(-100, 2000, -70);
+    driveForwardPID(20, 2000, 20);
+    driveForwardPID(25, 2000, 70);
+}
+
+
+
+
+
+/*---------------------------------------------------------------------------*/
+/*                                                                           */
+/*                              Autonomous Task                              */
+/*                                                                           */
+/*  This task is used to control your robot during the autonomous phase of   */
+/*  a VEX Competition.                                                       */
+/*                                                                           */
+/*  You must modify the code to add your own robot specific commands here.   */
+/*---------------------------------------------------------------------------*/
+
+void autonomous( void ) {
+
+    
+    // ..........................................................................
+    
+    if (auton == 1){
+        redCap();
+    }
+    else if (auton == 2){
+        redDouble();
+    }
+    else if (auton == 3){
+        redPark();
+    }
+    else if (auton == 4){
+        blueCap();
+    }
+    else if (auton == 5){
+        blueDouble();
+    }
+    else if (auton == 6){
+        bluePark();
+    }
+    else if (auton == 7){
+        redBack1();
+    }
+    else if (auton == 8){
+        blueBack1();
+    }
+    else if (auton == 9){
+        prog();
+    }
+    
+  // ..........................................................................
+
+    //prog();
+    
+}
+
+/*---------------------------------------------------------------------------*/
+/*                                                                           */
+/*                              User Control Task                            */
+/*                                                                           */
+/*  This task is used to control your robot during the user control phase of */
+/*  a VEX Competition.                                                       */
+/*                                                                           */
+/*  You must modify the code to add your own robot specific commands here.   */
+/*---------------------------------------------------------------------------*/
+
+void usercontrol( void ) {
+float y;
+    float x;
+    float y1 = 0;
+    float x1 = 0;
+    float slewRate = 11;
+    
+    float strafe;
+    RightFD.stop(brakeType::coast);
+    RightBD.stop(brakeType::coast);
+    LeftFD.stop(brakeType::coast);
+    LeftBD.stop(brakeType::coast);
+    while (1) {
+        Vision2.takeSnapshot(1);
+        Brain.Screen.clearScreen();
+        Brain.Screen.setCursor(1, 1);
+        Brain.Screen.print(Vision2.largestObject.centerX);
+        Brain.Screen.newLine();
+        Brain.Screen.print(Vision2.largestObject.centerY);
+      if (abs(Controller1.Axis3.value()) > 15){
+          y = Controller1.Axis3.value();
+      }
+      else {
+          y = 0;
+      }
+      
+      if (abs(Controller1.Axis1.value()) > 15){
+          x = Controller1.Axis1.value();
+      }
+      else {
+          x = 0;
+      }
+      
+      driveInput stuff = slew (y, y1, x, x1, slewRate);
+      y1 = stuff.power;
+      x1 = stuff.turn;
+     
+
+     LeftFD.spin(directionType::fwd, y1 + x1, velocityUnits::pct);
+     LeftBD.spin(directionType::fwd, y1 + x1, velocityUnits::pct);
+     RightFD.spin(directionType::fwd, y1 - x1, velocityUnits::pct);
+     RightBD.spin(directionType::fwd, y1 - x1, velocityUnits::pct);
+     if (Controller1.ButtonR2.pressing()){
+         Roller.spin(directionType::fwd, 100, velocityUnits::pct);
+     }
+     else if (Controller1.ButtonB.pressing()){
+         Roller.spin(directionType::fwd, -30, velocityUnits::pct);
+     }
+     else {
+         Roller.stop(vex::brakeType::coast);
+     }
+     if (Controller1.ButtonR1.pressing() && Sonar.distance(vex::distanceUnits::in) > 3.7){
+         Catapult.spin(directionType::fwd, 100, velocityUnits::pct);  
+     }
+     else if (Controller1.ButtonX.pressing()){
+         Catapult.spin(directionType::fwd, 100, velocityUnits::pct);
+     }
+     else {
+         Catapult.stop(brakeType::coast);
+     }
+        /*
+     if (Sonar.distance(distanceUnits::in) > 3.7) {
+         Brain.Screen.print("over 3.7");
+     } 
+     else if (Sonar.distance(distanceUnits::in) < 3.6){
+         Brain.Screen.print("under 3.7");
+     } 
+        */
+     bool isRotating = false;
+     if (Controller1.ButtonDown.pressing()){
+         Arm.spin(directionType::fwd, 100, velocityUnits::pct);
+         isRotating = false;
+     }
+
+     else if (Controller1.ButtonUp.pressing()){
+         Arm.spin(directionType::fwd, -100, velocityUnits::pct);
+         isRotating = false;
+     }
+     else if (Controller1.ButtonRight.pressing()){
+         Arm.startRotateTo(-1700,vex::rotationUnits::deg, 100, velocityUnits::pct);
+         isRotating = true;
+     }
+     else if (!isRotating){
+         Arm.stop(vex::brakeType::coast);
+     }
+        
+     
+     bool isTurning = false;
+     if (Controller1.ButtonL1.pressing()){
+         Sweeper.spin(directionType::fwd, 100, velocityUnits::pct);
+         isTurning = false;
+     }
+
+     else if (Controller1.ButtonL2.pressing()){
+         Sweeper.spin(directionType::fwd, -100, velocityUnits::pct);
+         isTurning = false;
+     }
+     else if (Controller1.ButtonLeft.pressing()){
+         Sweeper.rotateTo(-270,vex::rotationUnits::deg, 100, velocityUnits::pct);
+         isTurning = true;
+     }
+     else if (!isTurning){
+         Sweeper.stop(vex::brakeType::coast);
+     }
+    
+    if (Controller1.ButtonY.pressing()){
+    bool    vis = false;
+    bool visY = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis&& Controller1.ButtonY.pressing()) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 172 && Vision.objects[0].centerX < 180){
+         vis = true;
+     }
+     //If to the right (were blue)
+     else if (Vision.objects[0].centerX > 180){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 178 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    toExec = 0;
+    }
+    if (Controller1.ButtonA.pressing()){
+    bool    vis = false;
+    bool visY = false;
+    int toExec = 0;
+    toExec = 0;
+    while (!vis&& Controller1.ButtonA.pressing()) {
+     Vision.takeSnapshot(1);
+     //If in firing position
+     if (Vision.objects[0].centerX > 150 && Vision.objects[0].centerX < 152){
+         vis = true;
+     }
+     //If to the right
+     else if (Vision.objects[0].centerX > 152){
+         autoTurn(-10);
+     }
+     //If to the left
+     else if (Vision.objects[0].centerX < 150 && Vision.objects[0].centerX != 0){
+         autoTurn(10);
+     }
+     else{
+         autoTurn(0);
+     }
+        toExec = toExec + 1;
+     }
+    autoTurn(0);
+    toExec = 0;
+    }
+    vex::task::sleep(20); //Sleep the task for a short amount of time to prevent wasted resources. 
+  }
+}
+
+//
+// Main will set up the competition functions and callbacks.
+//
+int main() {
+    Brain.Screen.render(true,false); //set VSync (vertical sync) on, automatic refresh to off
+        //When we call Brain.Screen.render() with no arguments, it will force a redraw of the screen.
+        //With the previous command here we turned off automatic redraws, so the LCD will only redraw
+        //when we tell it to, which means we can guarantee it won't redraw in the middle of one of our
+        //other drawing commands and give a partial picture. Getting partial pictures on redraws is
+        //what causes flickering when drawing without this buffering scheme.
+    
+    while (true) {
+        Brain.Screen.clearScreen(); //clears the back buffer for drawing, default clear color is black
+        draw_grid(); //draws our grid to the back buffer
+        Brain.Screen.render(); //flips the back buffer to the screen all at once, preventing flickering
+        if (Brain.Screen.pressing()) { //if screen is touched...
+            while (Brain.Screen.pressing()) { //wait until the user stops touching the screen
+                Brain.Screen.clearScreen(); //while waiting, maintain the grid and draw
+                draw_grid();                //a touch indicator around the user's finger
+                draw_touch();
+                Brain.Screen.render();
+            }
+            vex::task::sleep(1); //wait a second for their hand to get a little further away
+            if (Brain.Screen.yPosition() < 80) {                   //released in bottom third of the screen
+                if (Brain.Screen.xPosition() < 160) {                   //released in left third of the screen
+                    auton = 1;
+                    break;
+                } else if (Brain.Screen.xPosition() > 320) {            //released in right third of the screen
+                    auton = 3;
+                    break;
+                } else {                                                //released in middle (left-to-right) third of the screen
+                    auton = 2;
+                    break;
+                }
+            } else if (Brain.Screen.yPosition() < 160) {             //released in top third of the screen
+                if (Brain.Screen.xPosition() < 160) {                   //released in left third of the screen
+                    auton = 4;
+                    break;
+                } else if (Brain.Screen.xPosition() > 320) {            //released in right third of the screen
+                    auton = 6;
+                    break;
+                } else {                                                //released in middle (left-to-right) third of the screen
+                    auton = 5;
+                    break;
+                }
+            } else {                                                //released in middle (top-to-bottom) of the screen
+                if (Brain.Screen.xPosition() < 160) {                   //released in left third of the screen
+                    auton = 7;
+                    break;
+                } else if (Brain.Screen.xPosition() > 320) {            //released in right third of the screen
+                    auton = 9;
+                    break;
+                } else {                                                //released in middle (left-to-right) third of the screen
+                    auton = 8;
+                    break;
+                }
+            }
+
+        } else {
+            vex::task::sleep(.1);
+        }
+    }
+    //Run the pre-autonomous function. 
+    pre_auton();
+    //Brain.Screen.print("started");
+    
+    //Set up callbacks for autonomous and driver control periods.
+    Competition.autonomous( autonomous );
+    Competition.drivercontrol( usercontrol );
+
+    //Prevent main from exiting with an infinite loop.                        
+    while(1) {
+      vex::task::sleep(100);//Sleep the task for a short amount of time to prevent wasted resources.
+    }    
+       
+}
